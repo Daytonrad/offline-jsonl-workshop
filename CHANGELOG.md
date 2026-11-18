@@ -4,6 +4,9 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Fixed
+- Rejections that already had their own cause now say so instead of the generic `invalid JSON`: a repeated object key reports `Line N: duplicate JSON object key`, and `NaN` / `Infinity` / `-Infinity` report `Line N: non-finite number (NaN or Infinity) is not allowed`. Neither message includes the key or any record content; real parse errors keep `invalid JSON` (#40).
+
 ## [0.2.0] - 2026-11-18
 
 ### Added

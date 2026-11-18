@@ -97,7 +97,9 @@ class UTF8GuardTests(unittest.TestCase):
             count_jsonl(io.BytesIO(b'[1,2]\n'))
 
     def test_non_finite_number_disallowed(self):
-        with self.assertRaisesRegex(JSONLValidationError, "invalid JSON"):
+        with self.assertRaisesRegex(
+            JSONLValidationError, "non-finite number \\(NaN or Infinity\\)"
+        ):
             count_jsonl(io.BytesIO(b'{"x":NaN}\n'))
 
     def test_validate_positive_max_bytes(self):
@@ -126,17 +128,23 @@ class UTF8GuardTests(unittest.TestCase):
 
     def test_duplicate_root_keys_are_rejected(self):
         payload = b'{"role":"viewer","role":"admin"}\n'
-        with self.assertRaisesRegex(JSONLValidationError, "Line 1: invalid JSON"):
+        with self.assertRaisesRegex(
+            JSONLValidationError, "Line 1: duplicate JSON object key"
+        ):
             count_jsonl(io.BytesIO(payload))
 
     def test_duplicate_nested_keys_are_rejected(self):
         payload = b'{"meta":{"enabled":true,"enabled":false}}\n'
-        with self.assertRaisesRegex(JSONLValidationError, "Line 1: invalid JSON"):
+        with self.assertRaisesRegex(
+            JSONLValidationError, "Line 1: duplicate JSON object key"
+        ):
             count_jsonl(io.BytesIO(payload))
 
     def test_escaped_and_literal_key_collisions_are_rejected(self):
         payload = b'{"id":1,"\\u0069d":2}\n'
-        with self.assertRaisesRegex(JSONLValidationError, "Line 1: invalid JSON"):
+        with self.assertRaisesRegex(
+            JSONLValidationError, "Line 1: duplicate JSON object key"
+        ):
             count_jsonl(io.BytesIO(payload))
 
     def test_duplicate_key_name_not_logged(self):
@@ -371,7 +379,10 @@ class BoundaryEdgeCaseTests(unittest.TestCase):
             key = "".join(rng.choice("aZ_\u00e7\u20ac\U0001f680") for _ in range(rng.randint(1, 5)))
             spelled = "".join(_escape_char(c, rng) if rng.random() < 0.6 else c for c in key)
             depth = rng.randint(0, 6)
-            for other, expected in ((spelled, "Line 1: invalid JSON"), (spelled + "x", 1)):
+            for other, expected in (
+                (spelled, "Line 1: duplicate JSON object key"),
+                (spelled + "x", 1),
+            ):
                 inner = '{"%s":1,"%s":2}' % (key, other)
                 text = '{"x":' * depth + inner + "}" * depth
                 self.assertEqual(self.outcome(text.encode("utf-8") + b"\n"), expected, text)
@@ -400,10 +411,14 @@ class BoundaryEdgeCaseTests(unittest.TestCase):
         verdicts = set()
         for _ in range(400):
             text = obj(0)
-            expected = "Line 1: invalid JSON" if _has_duplicate_keys(text) else 1
+            expected = (
+                "Line 1: duplicate JSON object key"
+                if _has_duplicate_keys(text)
+                else 1
+            )
             verdicts.add(expected)
             self.assertEqual(self.outcome(text.encode("utf-8") + b"\n"), expected, text)
-        self.assertEqual(verdicts, {1, "Line 1: invalid JSON"})
+        self.assertEqual(verdicts, {1, "Line 1: duplicate JSON object key"})
 
     def test_nesting_depth_around_recursion_limit_never_crashes(self):
         limit = sys.getrecursionlimit()
@@ -416,7 +431,11 @@ class BoundaryEdgeCaseTests(unittest.TestCase):
         }
         too_deep = "Line 1: JSON nesting is too deep"
         for name, build in shapes.items():
-            shallow = "Line 1: invalid JSON" if name == "duplicate_innermost" else 1
+            shallow = (
+                "Line 1: duplicate JSON object key"
+                if name == "duplicate_innermost"
+                else 1
+            )
             first_rejected = None
             for depth in depths:
                 with self.subTest(shape=name, depth=depth):
@@ -572,3 +591,32 @@ class CLIExitCodeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class SpecificRejectionMessageTests(unittest.TestCase):
+    """Issue #40: name the rejection instead of collapsing to "invalid JSON"."""
+
+    def message(self, payload):
+        try:
+            count_jsonl(io.BytesIO(payload))
+        except JSONLValidationError as exc:
+            return str(exc)
+        self.fail("expected JSONLValidationError")
+
+    def test_duplicate_key_is_named_without_the_key(self):
+        text = self.message(b'{"secret_token":1,"secret_token":2}\n')
+        self.assertEqual(text, "Line 1: duplicate JSON object key")
+        self.assertNotIn("secret_token", text)
+
+    def test_duplicate_key_reports_the_physical_line(self):
+        text = self.message(b'{"a":1}\n{"dup":1,"dup":2}\n')
+        self.assertEqual(text, "Line 2: duplicate JSON object key")
+
+    def test_non_finite_numbers_are_named(self):
+        expected = "Line 1: non-finite number (NaN or Infinity) is not allowed"
+        for payload in (b'{"a":NaN}\n', b'{"a":Infinity}\n', b'{"a":-Infinity}\n'):
+            with self.subTest(payload=payload):
+                self.assertEqual(self.message(payload), expected)
+
+    def test_plain_parse_errors_keep_the_generic_message(self):
+        self.assertEqual(self.message(b'{"a":}\n'), "Line 1: invalid JSON")
+        self.assertEqual(self.message(b'{"a":1} trailing\n'), "Line 1: invalid JSON")
