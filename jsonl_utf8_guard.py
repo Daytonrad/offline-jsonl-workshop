@@ -24,8 +24,16 @@ class JSONLValidationError(ValueError):
     """An invalid input record, identified by its physical line number."""
 
 
+class _DuplicateKeyError(ValueError):
+    """Raised by the object hook; deliberately carries no key or value."""
+
+
+class _NonFiniteNumberError(ValueError):
+    """Raised by parse_constant for NaN, Infinity and -Infinity."""
+
+
 def _reject_json_constant(value: str) -> None:
-    raise ValueError("Non-finite JSON numbers are not supported")
+    raise _NonFiniteNumberError("Non-finite JSON numbers are not supported")
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -33,7 +41,7 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     data: dict[str, Any] = {}
     for key, value in pairs:
         if key in data:
-            raise ValueError("Duplicate JSON object key")
+            raise _DuplicateKeyError("Duplicate JSON object key")
         data[key] = value
     return data
 
@@ -88,6 +96,15 @@ def iter_jsonl_records(
         except RecursionError as exc:
             raise JSONLValidationError(
                 f"Line {line_number}: JSON nesting is too deep"
+            ) from exc
+        except _DuplicateKeyError as exc:
+            raise JSONLValidationError(
+                f"Line {line_number}: duplicate JSON object key"
+            ) from exc
+        except _NonFiniteNumberError as exc:
+            raise JSONLValidationError(
+                f"Line {line_number}: non-finite number (NaN or Infinity) "
+                "is not allowed"
             ) from exc
         except ValueError as exc:
             raise JSONLValidationError(
