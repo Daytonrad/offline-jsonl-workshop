@@ -52,6 +52,23 @@ class UTF8GuardTests(unittest.TestCase):
         with self.assertRaisesRegex(JSONLValidationError, "Line 1: invalid JSON"):
             count_jsonl(io.BytesIO(b'{"x":\n'))
 
+    def test_utf8_bom_is_reported_explicitly(self):
+        with self.assertRaises(JSONLValidationError) as caught:
+            count_jsonl(io.BytesIO(b'\xef\xbb\xbf{"a":1}\n'))
+        self.assertEqual(
+            str(caught.exception), "Line 1: starts with a UTF-8 byte order mark (BOM)"
+        )
+
+    def test_bom_message_does_not_leak_record(self):
+        with self.assertRaises(JSONLValidationError) as caught:
+            count_jsonl(io.BytesIO(b'\xef\xbb\xbf{"password":"SECRET"}\n'))
+        self.assertNotIn("SECRET", str(caught.exception))
+
+    def test_bom_only_checked_on_first_line(self):
+        with self.assertRaises(JSONLValidationError) as caught:
+            count_jsonl(io.BytesIO(b'{"a":1}\n\xef\xbb\xbf{"b":2}\n'))
+        self.assertEqual(str(caught.exception), "Line 2: invalid JSON")
+
     def test_cr_only_line_endings_are_explained(self):
         with self.assertRaises(JSONLValidationError) as caught:
             count_jsonl(io.BytesIO(b'{"a":1}\r{"b":2}\r'))
@@ -456,6 +473,12 @@ class CLIExitCodeTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         self.assertEqual(proc.stdout, b"")
         self.assertNotIn(b"secret_token", proc.stderr)
+
+    def test_bom_file_exits_two_with_clear_message(self):
+        proc = self.run_cli(stdin=b'\xef\xbb\xbf{"a":1}\n')
+        self.assertEqual(proc.returncode, 2)
+        self.assertEqual(proc.stdout, b"")
+        self.assertIn(b"Line 1: starts with a UTF-8 byte order mark (BOM)", proc.stderr)
 
     def test_cr_only_file_exits_two_with_clear_message(self):
         proc = self.run_cli(stdin=b'{"a":1}\r{"b":2}\r')
