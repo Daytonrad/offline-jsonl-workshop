@@ -69,6 +69,29 @@ class UTF8GuardTests(unittest.TestCase):
             count_jsonl(io.BytesIO(b'{"a":1}\n\xef\xbb\xbf{"b":2}\n'))
         self.assertEqual(str(caught.exception), "Line 2: invalid JSON")
 
+    def test_cr_only_line_endings_are_explained(self):
+        with self.assertRaises(JSONLValidationError) as caught:
+            count_jsonl(io.BytesIO(b'{"a":1}\r{"b":2}\r'))
+        self.assertEqual(str(caught.exception), "Line 1: contains a bare carriage return; use LF or CRLF line endings")
+
+    def test_bare_cr_message_does_not_leak_record(self):
+        with self.assertRaises(JSONLValidationError) as caught:
+            count_jsonl(io.BytesIO(b'{"password":"SECRET"}\r{"b":2}\n'))
+        self.assertNotIn("SECRET", str(caught.exception))
+
+    def test_bare_cr_reports_physical_line_number(self):
+        with self.assertRaises(JSONLValidationError) as caught:
+            count_jsonl(io.BytesIO(b'{"a":1}\n{"b":2}\r{"c":3}\n'))
+        self.assertEqual(str(caught.exception), "Line 2: contains a bare carriage return; use LF or CRLF line endings")
+
+    def test_oversize_line_with_bare_cr_reports_size_first(self):
+        with self.assertRaises(JSONLValidationError) as caught:
+            count_jsonl(io.BytesIO(b'{"a":1}\r{"b":2}\n'), max_bytes=5)
+        self.assertEqual(str(caught.exception), "Line 1: exceeds 5 UTF-8 bytes")
+
+    def test_crlf_and_trailing_cr_still_accepted(self):
+        self.assertEqual(count_jsonl(io.BytesIO(b'{"a":1}\r\n{"b":2}\r')), 2)
+
     def test_top_level_array_not_allowed(self):
         with self.assertRaisesRegex(JSONLValidationError, "expected a JSON object"):
             count_jsonl(io.BytesIO(b'[1,2]\n'))
@@ -305,12 +328,12 @@ class BoundaryEdgeCaseTests(unittest.TestCase):
 
     def test_carriage_return_alone_is_not_a_record_separator(self):
         # Only LF (optionally preceded by CR) ends a record; CR-only files are one line.
-        self.assertEqual(self.outcome(b'{"a":1}\r{"b":2}\r'), "Line 1: invalid JSON")
+        self.assertEqual(self.outcome(b'{"a":1}\r{"b":2}\r'), "Line 1: contains a bare carriage return; use LF or CRLF line endings")
         self.assertEqual(self.outcome(b'{"a":1}\r'), 1)
         self.assertEqual(self.outcome(b"\r"), 0)
         self.assertEqual(self.outcome(b'{"a":1}\n\r'), 1)
         # A raw CR inside a string is a control character, not a line break.
-        self.assertEqual(self.outcome(b'{"a":"x\ry"}\n'), "Line 1: invalid JSON")
+        self.assertEqual(self.outcome(b'{"a":"x\ry"}\n'), "Line 1: contains a bare carriage return; use LF or CRLF line endings")
 
     def test_unicode_escapes_and_surrogates_match_stdlib(self):
         rng = random.Random(self.SEED + 3)
@@ -456,6 +479,12 @@ class CLIExitCodeTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         self.assertEqual(proc.stdout, b"")
         self.assertIn(b"Line 1: starts with a UTF-8 byte order mark (BOM)", proc.stderr)
+
+    def test_cr_only_file_exits_two_with_clear_message(self):
+        proc = self.run_cli(stdin=b'{"a":1}\r{"b":2}\r')
+        self.assertEqual(proc.returncode, 2)
+        self.assertEqual(proc.stdout, b"")
+        self.assertIn(b"Line 1: contains a bare carriage return", proc.stderr)
 
     def test_missing_input_file_exits_two(self):
         proc = self.run_cli("--input", "does-not-exist.jsonl")

@@ -9,6 +9,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ### Fixed
 - A file starting with a UTF-8 byte order mark is still rejected, but the error now says so (`Line 1: starts with a UTF-8 byte order mark (BOM)`) instead of a generic `invalid JSON` (#31).
+- A line containing a bare carriage return (for example a CR-only file) is still rejected, but the error now explains it (`Line N: contains a bare carriage return; use LF or CRLF line endings`) instead of a generic `invalid JSON`. The byte-limit check still runs first (#32).
 
 ### Documentation
 - `docs/AI_WORKFLOW_TUTORIAL_TR_EN.md`: a 5-minute TR/EN tutorial on the real Claude Code workflow used for #8, linked from the README; `SHA256SUMS` regenerated for the README change (#16).
