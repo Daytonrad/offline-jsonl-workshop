@@ -63,6 +63,11 @@ def iter_jsonl_records(
             )
         if not payload.strip():
             continue
+        if b"\r" in payload:
+            raise JSONLValidationError(
+                f"Line {line_number}: contains a bare carriage return; "
+                "use LF or CRLF line endings"
+            )
         try:
             text = payload.decode("utf-8", errors="strict")
         except UnicodeDecodeError as exc:
