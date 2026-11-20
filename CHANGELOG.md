@@ -4,6 +4,9 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Added
+- `--report-all` for `jsonl_utf8_guard.py`: keeps scanning past the first invalid line and prints one JSON summary, `{"status": "invalid", "records": N, "errors": [{"line": L, "reason": "..."}], "truncated": false, "max_bytes": ...}`, exit code `2`. At most `MAX_REPORTED_ERRORS` (100) errors are listed and `"truncated": true` marks a longer list; `records` counts valid objects across the whole file. An over-long line is still rejected before decoding and is drained in fixed-size chunks so later lines can be checked. The default single-error behavior, messages and exit codes are unchanged (#33).
+
 ### Fixed
 - Non-object JSONL records name their JSON type without including input values.
 - `--max-bytes` is validated by argparse, so `0` and negative values are a usage error naming the argument (`must be a positive integer, got 0`, exit 2) instead of a `Validation failed:` line that read like bad input. The library check in `iter_jsonl_records` is unchanged for direct callers; a non-number keeps argparse's own message (#41).

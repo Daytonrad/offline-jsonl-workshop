@@ -60,6 +60,17 @@ py -3 verify_release.py --archive "offline-jsonl-workshop.zip" --trusted-sha256-
 
 The tool hashes the exact bytes it then parses and rejects malformed or mismatched hashes; `--archive` is required. The sidecar must hold a single LF- or CRLF-terminated record in the format `<64 lowercase hex digits>  workshop.zip` with a matching ZIP filename; oversized, malformed or symlinked sidecars are rejected. The two options cannot be combined.
 
+### Reporting every invalid line
+
+By default the validator stops at the first bad record, which is the right thing for a quick check. For a large export, `--report-all` keeps scanning and prints one bounded JSON summary instead:
+
+~~~powershell
+py -3 jsonl_utf8_guard.py --input multi.jsonl --report-all
+# {"status": "invalid", "records": 2, "errors": [{"line": 2, "reason": "invalid JSON"}, {"line": 4, "reason": "expected a JSON object, got an array"}], "truncated": false, "max_bytes": 65536}
+~~~
+
+Exit code `2` still means invalid input and `0` means valid input; `records` counts the valid objects seen, so it stays exact even when lines fail. At most 100 errors are reported and `"truncated": true` marks a longer list. A line over `--max-bytes` is still rejected before its bytes are decoded: the rest of that line is drained in fixed-size chunks so the following lines can be checked without ever decoding or printing the record. Reasons carry a line number and a cause only, never record content or key names.
+
 ### Offline package
 
 A separate release builder in the original development workspace (`prepare_workshop_release.py`, not needed to use the archive) packages the workshop from an explicit allowlist: this README, the bilingual runbook ([`WORKSHOP_RUNBOOK_TR_EN.md`](WORKSHOP_RUNBOOK_TR_EN.md)), the sample, the license, three scripts, three test modules and `SHA256SUMS`, without backups, credentials or local handoff files. Rebuilding from the same source bytes gives the same ZIP hash, and a SHA-256 sidecar is written beside the ZIP. After extracting it into its own directory:
@@ -117,6 +128,8 @@ py -3 red_green_demo.py
 ~~~
 
 **Dosyaları doğrulama.** Depoyu klonladıktan veya ZIP paketini çıkardıktan sonra `py -3 verify_release.py` çalıştırın. Araç tüm kaynak dosyalarını `SHA256SUMS` ile karşılaştırır; değiştirilmiş veya eksik dosyaları, hatalı veya yinelenmiş manifest kayıtlarını ve klasör dışına erişim girişimlerini reddeder. ZIP'i açmadan kontrol etmek için `--archive "path\to\offline-jsonl-workshop.zip"` kullanın; yinelenen, eksik, güvensiz, sembolik bağlantılı ve aşırı büyük kayıtlar reddedilir, ZIP içindeki kod çalıştırılmaz. ZIP'in tam SHA-256 değerini bağımsız ve güvenilir bir kaynaktan aldıysanız `--expected-archive-sha256 "<guvenilir_64_karakter_kucuk_harf_sha256>"` veya `--trusted-sha256-file` ile ayrıca kontrol edin; yan dosya Windows CRLF ve Linux LF satır sonlarını destekler.
+
+**Tüm hatalı satırları raporlama.** Varsayılan olarak doğrulayıcı ilk hatalı kayıtta durur. Büyük bir dışa aktarım için `--report-all` taramaya devam eder ve tek bir sınırlı JSON özeti yazdırır: `{"status": "invalid", "records": 2, "errors": [{"line": 2, "reason": "invalid JSON"}], "truncated": false, "max_bytes": 65536}`. Çıkış kodu `2` yine geçersiz giriş, `0` geçerli giriş anlamına gelir; `records` görülen geçerli nesne sayısıdır. En fazla 100 hata raporlanır ve daha uzun liste `"truncated": true` ile işaretlenir. `--max-bytes` sınırını aşan satır yine çözülmeden reddedilir; satırın geri kalanı sabit boyutlu parçalarla tüketilir, böylece sonraki satırlar denetlenebilir ve kayıt içeriği hiçbir zaman yazdırılmaz.
 
 **Sınırlamalar.** Örnek eğitim amaçlıdır, genel bir üretim ayrıştırıcısı değildir. Paket içindeki `SHA256SUMS` yalnızca iç tutarlılığı gösterir, yayıncının kimliğini kanıtlamaz; ZIP ile aynı güvenilmeyen kaynaktan gelen hash veya yan dosya da kanıtlamaz. Atölye bağımsız olarak hazırlanmıştır; gerçek etkinlik, katılımcı, sponsorluk veya program kabulü iddiası yoktur.
 

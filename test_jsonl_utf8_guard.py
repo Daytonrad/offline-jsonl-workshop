@@ -8,6 +8,7 @@ import random
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -192,6 +193,139 @@ class UTF8GuardTests(unittest.TestCase):
             count_jsonl(io.BytesIO(payload))
         self.assertIn("Line 1", str(ctx.exception))
         self.assertNotIn("[[[", str(ctx.exception))
+
+
+class ReportAllTests(unittest.TestCase):
+    """#33: --report-all keeps scanning past the first invalid line."""
+
+    def _scan(self, payload, **kwargs):
+        return jsonl_utf8_guard.scan_jsonl(io.BytesIO(payload), **kwargs)
+
+    def _run_cli(self, *args):
+        script = Path(__file__).with_name("jsonl_utf8_guard.py")
+        return subprocess.run(
+            [sys.executable, "-B", str(script), *args],
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+
+    def _write(self, folder, name, payload):
+        path = Path(folder) / name
+        path.write_bytes(payload)
+        return str(path)
+
+    def test_reports_every_invalid_line(self):
+        records, errors, truncated = self._scan(
+            b'{"a":1}\n{bad\n{"b":2}\n[1]\n'
+        )
+        self.assertEqual(records, 2)
+        self.assertEqual(
+            errors, [(2, "invalid JSON"), (4, "expected a JSON object, got an array")]
+        )
+        self.assertFalse(truncated)
+
+    def test_line_numbers_count_blank_lines(self):
+        records, errors, _ = self._scan(b'{"a":1}\n\n{bad\n')
+        self.assertEqual(records, 1)
+        self.assertEqual(errors, [(3, "invalid JSON")])
+
+    def test_default_path_still_stops_at_the_first_bad_line(self):
+        with self.assertRaisesRegex(JSONLValidationError, "Line 2: invalid JSON"):
+            count_jsonl(io.BytesIO(b'{"a":1}\n{bad\n{"b":2}\n'))
+
+    def test_cap_marks_output_truncated_but_counts_every_record(self):
+        records, errors, truncated = self._scan(
+            b"[1]\n" * 5 + b'{"ok":true}\n', max_errors=2
+        )
+        self.assertEqual(records, 1)
+        self.assertEqual(
+            errors,
+            [(1, "expected a JSON object, got an array"), (2, "expected a JSON object, got an array")],
+        )
+        self.assertTrue(truncated)
+
+    def test_oversize_line_is_not_decoded_and_later_lines_still_counted(self):
+        payload = b'{"secret":"' + b"\xff" * 40 + b'"}\n{"ok":true}\n'
+        records, errors, _ = self._scan(payload, max_bytes=20)
+        self.assertEqual(records, 1)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0][0], 1)
+        self.assertIn("exceeds 20 UTF-8 bytes", errors[0][1])
+        self.assertNotIn("secret", errors[0][1])
+
+    def test_reads_stay_bounded_while_draining(self):
+        class Spy(io.BytesIO):
+            def __init__(self, payload):
+                super().__init__(payload)
+                self.sizes = []
+
+            def readline(self, size=-1):
+                self.sizes.append(size)
+                return super().readline(size)
+
+        source = Spy(b'{"x":"' + b"a" * 50 + b'"}\n{"ok":1}\n')
+        records, errors, _ = jsonl_utf8_guard.scan_jsonl(source, max_bytes=10)
+        self.assertEqual(records, 1)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(source.sizes[0], 13)
+        self.assertTrue(all(size <= 4096 for size in source.sizes))
+
+    def test_scan_validates_max_errors(self):
+        for bad in (0, -1, True, 1.5):
+            with self.subTest(max_errors=bad), self.assertRaises(ValueError):
+                jsonl_utf8_guard.scan_jsonl(io.BytesIO(b"{}\n"), max_errors=bad)
+
+    def test_cli_report_all_lists_every_bad_line(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._write(
+                folder, "multi.jsonl", b'{"a":1}\n{bad\n{"b":2}\n[1]\n'
+            )
+            proc = self._run_cli("--input", path, "--report-all")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report["status"], "invalid")
+        self.assertEqual(report["records"], 2)
+        self.assertEqual(
+            report["errors"],
+            [
+                {"line": 2, "reason": "invalid JSON"},
+                {"line": 4, "reason": "expected a JSON object, got an array"},
+            ],
+        )
+        self.assertFalse(report["truncated"])
+        self.assertNotIn("bad", proc.stdout)
+
+    def test_cli_report_all_keeps_exit_zero_when_valid(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._write(folder, "ok.jsonl", b'{"a":1}\n{"b":2}\n')
+            proc = self._run_cli("--input", path, "--report-all")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            json.loads(proc.stdout),
+            {"status": "ok", "records": 2, "max_bytes": 65536},
+        )
+
+    def test_cli_without_flag_still_stops_at_the_first_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._write(folder, "multi.jsonl", b"[1]\n[2]\n")
+            proc = self._run_cli("--input", path)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("Validation failed: Line 1:", proc.stderr)
+        self.assertEqual(proc.stdout, "")
+
+    def test_cli_report_all_caps_the_error_list(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._write(folder, "many.jsonl", b"[1]\n" * 150)
+            proc = self._run_cli("--input", path, "--report-all")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(
+            len(report["errors"]), jsonl_utf8_guard.MAX_REPORTED_ERRORS
+        )
+        self.assertTrue(report["truncated"])
+        self.assertEqual(report["records"], 0)
 
 
 class BoundaryPropertyTests(unittest.TestCase):
