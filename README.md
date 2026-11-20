@@ -66,7 +66,7 @@ By default the validator stops at the first bad record, which is the right thing
 
 ~~~powershell
 py -3 jsonl_utf8_guard.py --input multi.jsonl --report-all
-# {"status": "invalid", "records": 2, "errors": [{"line": 2, "reason": "invalid JSON"}, {"line": 4, "reason": "expected a JSON object"}], "truncated": false, "max_bytes": 65536}
+# {"status": "invalid", "records": 2, "errors": [{"line": 2, "reason": "invalid JSON"}, {"line": 4, "reason": "expected a JSON object, got an array"}], "truncated": false, "max_bytes": 65536}
 ~~~
 
 Exit code `2` still means invalid input and `0` means valid input; `records` counts the valid objects seen, so it stays exact even when lines fail. At most 100 errors are reported and `"truncated": true` marks a longer list. A line over `--max-bytes` is still rejected before its bytes are decoded: the rest of that line is drained in fixed-size chunks so the following lines can be checked without ever decoding or printing the record. Reasons carry a line number and a cause only, never record content or key names.
@@ -99,6 +99,7 @@ Thanks to everyone who has improved this workshop:
 
 - [@P1LOTRX](https://github.com/P1LOTRX): clear errors for a UTF-8 BOM (#31) and for bare carriage returns (#32), released in v0.2.0.
 - [@rise11hx-cmyk](https://github.com/rise11hx-cmyk): `--max-bytes` rejected as a usage error (#41), and named messages for duplicate keys and non-finite numbers (#40).
+- [@jwalith4418-Mj](https://github.com/jwalith4418-Mj): non-object records name their JSON type without echoing the value (#47).
 
 Want to join them? Issues labelled [good first issue](https://github.com/senanurcetin/offline-jsonl-workshop/issues?q=is%3Aopen+label%3A%22good+first+issue%22) have a reproduction and a definition of done, and questions are welcome in [Discussions](https://github.com/senanurcetin/offline-jsonl-workshop/discussions). See [CONTRIBUTING.md](CONTRIBUTING.md).
 

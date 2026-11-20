@@ -17,6 +17,25 @@ from jsonl_utf8_guard import DEFAULT_MAX_BYTES, JSONLValidationError, count_json
 
 
 class UTF8GuardTests(unittest.TestCase):
+    def test_non_object_messages_name_only_the_json_type(self):
+        cases = [
+            (b'["PRIVATE_ARRAY"]', "an array", "PRIVATE_ARRAY"),
+            (b'"PRIVATE_STRING"', "a string", "PRIVATE_STRING"),
+            (b'123456789', "a number", "123456789"),
+            (b'12345.6789', "a number", "12345.6789"),
+            (b'true', "true", None),
+            (b'false', "false", None),
+            (b'null', "null", None),
+        ]
+        for payload, kind, private in cases:
+            with self.subTest(kind=kind, payload_type=type(payload).__name__):
+                with self.assertRaises(JSONLValidationError) as caught:
+                    count_jsonl(io.BytesIO(b'{}\n' + payload + b'\n'))
+                message = str(caught.exception)
+                self.assertEqual(message, f"Line 2: expected a JSON object, got {kind}")
+                if private is not None:
+                    self.assertNotIn(private, message)
+
     def test_basic_object(self):
         self.assertEqual(count_jsonl(io.BytesIO(b'{"type":"user"}\n')), 1)
 
@@ -94,7 +113,7 @@ class UTF8GuardTests(unittest.TestCase):
         self.assertEqual(count_jsonl(io.BytesIO(b'{"a":1}\r\n{"b":2}\r')), 2)
 
     def test_top_level_array_not_allowed(self):
-        with self.assertRaisesRegex(JSONLValidationError, "expected a JSON object"):
+        with self.assertRaisesRegex(JSONLValidationError, "expected a JSON object, got an array"):
             count_jsonl(io.BytesIO(b'[1,2]\n'))
 
     def test_non_finite_number_disallowed(self):
@@ -203,7 +222,7 @@ class ReportAllTests(unittest.TestCase):
         )
         self.assertEqual(records, 2)
         self.assertEqual(
-            errors, [(2, "invalid JSON"), (4, "expected a JSON object")]
+            errors, [(2, "invalid JSON"), (4, "expected a JSON object, got an array")]
         )
         self.assertFalse(truncated)
 
@@ -223,7 +242,7 @@ class ReportAllTests(unittest.TestCase):
         self.assertEqual(records, 1)
         self.assertEqual(
             errors,
-            [(1, "expected a JSON object"), (2, "expected a JSON object")],
+            [(1, "expected a JSON object, got an array"), (2, "expected a JSON object, got an array")],
         )
         self.assertTrue(truncated)
 
@@ -272,7 +291,7 @@ class ReportAllTests(unittest.TestCase):
             report["errors"],
             [
                 {"line": 2, "reason": "invalid JSON"},
-                {"line": 4, "reason": "expected a JSON object"},
+                {"line": 4, "reason": "expected a JSON object, got an array"},
             ],
         )
         self.assertFalse(report["truncated"])

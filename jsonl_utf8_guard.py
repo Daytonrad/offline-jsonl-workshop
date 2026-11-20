@@ -119,7 +119,17 @@ def _check_payload(
     except ValueError as exc:
         raise JSONLValidationError(line_number, "invalid JSON") from exc
     if not isinstance(data, dict):
-        raise JSONLValidationError(line_number, "expected a JSON object")
+        if data is None:
+            kind = "null"
+        elif isinstance(data, bool):
+            kind = "true" if data else "false"
+        elif isinstance(data, (int, float)):
+            kind = "a number"
+        elif isinstance(data, str):
+            kind = "a string"
+        else:
+            kind = "an array"
+        raise JSONLValidationError(line_number, f"expected a JSON object, got {kind}")
     return data
 
 
